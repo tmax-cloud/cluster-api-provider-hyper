@@ -28,7 +28,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	expinfrastructurev1alpha3 "cluster-api-provider-hyper/apis/exp.infrastructure/v1alpha3"
+	infrastructurev1alpha3 "cluster-api-provider-hyper/apis/infrastructure/v1alpha3"
 	expinfrastructurecontroller "cluster-api-provider-hyper/controllers/exp.infrastructure"
+	infrastructurecontroller "cluster-api-provider-hyper/controllers/infrastructure"
+
+	clusterv1 "sigs.k8s.io/cluster-api/api/v1alpha3"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -41,6 +45,8 @@ func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(expinfrastructurev1alpha3.AddToScheme(scheme))
+	utilruntime.Must(infrastructurev1alpha3.AddToScheme(scheme))
+	utilruntime.Must(clusterv1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -73,6 +79,14 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "HyperMachinePool")
+		os.Exit(1)
+	}
+	if err = (&infrastructurecontroller.HyperClusterReconciler{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("HyperCluster"),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HyperCluster")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

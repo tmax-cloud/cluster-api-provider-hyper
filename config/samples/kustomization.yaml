@@ -1,4 +1,5 @@
 ## Append samples you want in your CSV to this file as resources ##
 resources:
 - exp.infrastructure_v1alpha3_hypermachinepool.yaml
+- infrastructure_v1alpha3_hypercluster.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

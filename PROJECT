@@ -7,6 +7,9 @@ resources:
 - group: exp.infrastructure
   kind: HyperMachinePool
   version: v1alpha3
+- group: infrastructure
+  kind: HyperCluster
+  version: v1alpha3
 version: 3-alpha
 plugins:
   go.sdk.operatorframework.io/v2-alpha: {}

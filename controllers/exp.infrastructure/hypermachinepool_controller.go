@@ -46,6 +46,7 @@ type HyperMachinePoolReconciler struct {
 
 // +kubebuilder:rbac:groups=exp.infrastructure.cluster.x-k8s.io,resources=hypermachinepools,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=exp.infrastructure.cluster.x-k8s.io,resources=hypermachinepools/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=cluster.x-k8s.io,resources=clusters;clusters/status,verbs=get;list;watch
 
 func (r *HyperMachinePoolReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	ctx := context.TODO()
