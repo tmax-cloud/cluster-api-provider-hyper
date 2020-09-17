@@ -1,0 +1,12 @@
+domain: cluster.x-k8s.io
+layout: go.kubebuilder.io/v2
+multigroup: true
+projectName: cluster-api-provider-hyper
+repo: cluster-api-provider-hyper
+resources:
+- group: exp.infrastructure
+  kind: HyperMachinePool
+  version: v1alpha3
+version: 3-alpha
+plugins:
+  go.sdk.operatorframework.io/v2-alpha: {}
