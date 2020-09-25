@@ -53,7 +53,7 @@ type HyperClusterReconciler struct {
 // +kubebuilder:rbac:groups=infrastructure.cluster.x-k8s.io,resources=hyperclusters/status,verbs=get;update;patch
 
 func (r *HyperClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	ctx := context.Background()
+	ctx := context.TODO()
 	log := r.Log.WithValues("hypercluster", req.NamespacedName)
 
 	// your logic here
@@ -98,18 +98,18 @@ func (r *HyperClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 
 	// Handle deleted clusters
 	if !hc.DeletionTimestamp.IsZero() {
-		return reconcileDelete(clusterScope)
+		return reconcileClusterDelete(clusterScope)
 	}
 
 	// Handle non-deleted clusters
-	return reconcileNormal(clusterScope)
+	return reconcileClusterNormal(clusterScope)
 }
 
-func reconcileDelete(clusterScope *scope.ClusterScope) (reconcile.Result, error) {
+func reconcileClusterDelete(clusterScope *scope.ClusterScope) (reconcile.Result, error) {
 	return reconcile.Result{}, nil
 }
 
-func reconcileNormal(clusterScope *scope.ClusterScope) (reconcile.Result, error) {
+func reconcileClusterNormal(clusterScope *scope.ClusterScope) (reconcile.Result, error) {
 	log := clusterScope.Logger
 	if clusterScope.HyperCluster.Status.Ready {
 		log.Info("apiEndpoint already exists. skip reconcile")

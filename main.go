@@ -89,6 +89,14 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "HyperCluster")
 		os.Exit(1)
 	}
+	if err = (&infrastructurecontroller.HyperMachineReconciler{
+		Client: mgr.GetClient(),
+		Log:    ctrl.Log.WithName("controllers").WithName("HyperMachine"),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "HyperMachine")
+		os.Exit(1)
+	}
 	// +kubebuilder:scaffold:builder
 
 	setupLog.Info("starting manager")

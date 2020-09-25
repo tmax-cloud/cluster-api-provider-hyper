@@ -110,6 +110,11 @@ func validSSH(hmp *expinfrav1.HyperMachinePool) {
 
 			hmp.Status.OS = string(out)[len(string("ID=")) : len(outStr)-2]
 		}
+		if out, err := ssh.SendCommands("hostname"); err == nil {
+			outStr = string(out)
+
+			hmp.Status.HostName = string(out)[:len(outStr)-2]
+		}
 
 		ssh.Close()
 	}
@@ -119,10 +124,12 @@ func initHyperMachinePool(hmp *expinfrav1.HyperMachinePool) bool {
 	if hmp.Labels == nil {
 		hmp.Labels = map[string]string{
 			infraUtil.LabelHyperMachinePoolValid: "false",
+			infraUtil.LabelClusterName:           "",
 		}
 		return true
 	} else if _, ok := hmp.Labels[infraUtil.LabelHyperMachinePoolValid]; !ok {
 		hmp.Labels[infraUtil.LabelHyperMachinePoolValid] = "false"
+		hmp.Labels[infraUtil.LabelClusterName] = ""
 		return true
 	} else {
 		return false
