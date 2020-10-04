@@ -1,0 +1,104 @@
+
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.3.0
+  creationTimestamp: null
+  name: hypermachinepools.exp.infrastructure.cluster.x-k8s.io
+spec:
+  group: exp.infrastructure.cluster.x-k8s.io
+  names:
+    categories:
+    - cluster-api
+    kind: HyperMachinePool
+    listKind: HyperMachinePoolList
+    plural: hypermachinepools
+    shortNames:
+    - hmp
+    singular: hypermachinepool
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - description: is hypermachine's SSH info valid
+      jsonPath: .metadata.labels.infrastructure\.cluster\.x-k8s\.io/hypermachinepool-valid
+      name: Valid
+      type: string
+    - description: ip:port address
+      jsonPath: .spec.ssh.address
+      name: Ip
+      type: string
+    - description: os
+      jsonPath: .status.os
+      name: OS
+      type: string
+    - description: hostname
+      jsonPath: .status.hostname
+      name: HostName
+      type: string
+    - description: networkInterface
+      jsonPath: .status.networkInterface
+      name: NetworkInterfacne
+      type: string
+    name: v1alpha3
+    schema:
+      openAPIV3Schema:
+        description: HyperMachinePool is the Schema for the hypermachinepools API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: HyperMachinePoolSpec defines the desired state of HyperMachinePool
+            properties:
+              ssh:
+                properties:
+                  address:
+                    type: string
+                  id:
+                    type: string
+                  pw:
+                    type: string
+                required:
+                - address
+                - id
+                - pw
+                type: object
+            required:
+            - ssh
+            type: object
+          status:
+            description: HyperMachinePoolStatus defines the observed state of HyperMachinePool
+            properties:
+              Error:
+                type: string
+              hostname:
+                type: string
+              kernel:
+                type: string
+              networkInterface:
+                type: string
+              os:
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
+status:
+  acceptedNames:
+    kind: ""
+    plural: ""
+  conditions: []
+  storedVersions: []

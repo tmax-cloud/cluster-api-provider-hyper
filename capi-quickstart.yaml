@@ -1,0 +1,109 @@
+apiVersion: cluster.x-k8s.io/v1alpha3
+kind: Cluster
+metadata:
+  name: hyper-test
+  namespace: default
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+      - 192.168.0.0/16
+  controlPlaneRef:
+    apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+    kind: KubeadmControlPlane
+    name: hyper-test-control-plane
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+    kind: HyperCluster
+    name: hyper-test
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+kind: HyperCluster
+metadata:
+  name: hyper-test
+  namespace: default
+---
+apiVersion: controlplane.cluster.x-k8s.io/v1alpha3
+kind: KubeadmControlPlane
+metadata:
+  name: hyper-test-control-plane
+  namespace: default
+spec:
+  infrastructureTemplate:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+    kind: HyperMachineTemplate
+    name: hyper-test-control-plane
+  kubeadmConfigSpec:
+    initConfiguration:
+      nodeRegistration:
+        name: '{{ ds.meta_data.local_hostname }}'
+    joinConfiguration:
+      nodeRegistration:
+        name: '{{ ds.meta_data.local_hostname }}'
+  replicas: 3
+  version: v1.17.3
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+kind: HyperMachineTemplate
+metadata:
+  name: hyper-test-control-plane
+  namespace: default
+spec:
+  template:
+    spec:
+      providerID: ""
+---
+apiVersion: cluster.x-k8s.io/v1alpha3
+kind: MachineDeployment
+metadata:
+  name: hyper-test-md-0
+  namespace: default
+spec:
+  clusterName: hyper-test
+  minReadySeconds: 600
+  progressDeadlineSeconds: 600
+  revisionHistoryLimit: 1
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+    type: RollingUpdate
+  replicas: 1
+  selector:
+    matchExpressions:
+      - {key: cluster.x-k8s.io/cluster-name, operator: In, values: [hyper-test]}
+  template:
+    spec:
+      bootstrap:
+        configRef:
+          apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+          kind: KubeadmConfigTemplate
+          name: hyper-test-md-0
+      clusterName: hyper-test
+      infrastructureRef:
+        apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+        kind: HyperMachineTemplate
+        name: hyper-test-md-0
+      version: v1.17.3
+---
+apiVersion: infrastructure.cluster.x-k8s.io/v1alpha3
+kind: HyperMachineTemplate
+metadata:
+  name: hyper-test-md-0
+  namespace: default
+spec:
+  template:
+    spec:
+      providerID: ""
+---
+apiVersion: bootstrap.cluster.x-k8s.io/v1alpha3
+kind: KubeadmConfigTemplate
+metadata:
+  name: hyper-test-md-0
+  namespace: default
+spec:
+  template:
+    spec:
+      joinConfiguration:
+        nodeRegistration:
+          name: '{{ ds.meta_data.local_hostname }}'
