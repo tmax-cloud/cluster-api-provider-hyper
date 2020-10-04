@@ -37,6 +37,10 @@ spec:
       jsonPath: .status.hostname
       name: HostName
       type: string
+    - description: networkInterface
+      jsonPath: .status.networkInterface
+      name: NetworkInterfacne
+      type: string
     name: v1alpha3
     schema:
       openAPIV3Schema:
@@ -81,6 +85,8 @@ spec:
               hostname:
                 type: string
               kernel:
+                type: string
+              networkInterface:
                 type: string
               os:
                 type: string

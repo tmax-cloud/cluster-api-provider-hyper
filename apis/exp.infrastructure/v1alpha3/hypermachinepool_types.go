@@ -42,10 +42,11 @@ type HyperMachinePoolStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
-	Error    string `json:"Error,omitempty"`
-	OS       string `json:"os,omitempty"`
-	Kernel   string `json:"kernel,omitempty"`
-	HostName string `json:"hostname,omitempty"`
+	Error            string `json:"Error,omitempty"`
+	OS               string `json:"os,omitempty"`
+	Kernel           string `json:"kernel,omitempty"`
+	HostName         string `json:"hostname,omitempty"`
+	NetworkInterface string `json:"networkInterface,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -55,6 +56,7 @@ type HyperMachinePoolStatus struct {
 // +kubebuilder:printcolumn:name="Ip",type="string",JSONPath=".spec.ssh.address",description="ip:port address"
 // +kubebuilder:printcolumn:name="OS",type="string",JSONPath=".status.os",description="os"
 // +kubebuilder:printcolumn:name="HostName",type="string",JSONPath=".status.hostname",description="hostname"
+// +kubebuilder:printcolumn:name="NetworkInterfacne",type="string",JSONPath=".status.networkInterface",description="networkInterface"
 
 // HyperMachinePool is the Schema for the hypermachinepools API
 type HyperMachinePool struct {

@@ -23,6 +23,7 @@ type MachineScopeParams struct {
 	Client       client.Client
 	Logger       logr.Logger
 	Cluster      *clusterv1.Cluster
+	HyperCluster *infrav1.HyperCluster
 	Machine      *clusterv1.Machine
 	HyperMachine *infrav1.HyperMachine
 }
@@ -42,6 +43,9 @@ func NewMachineScope(params MachineScopeParams) (*MachineScope, error) {
 	if params.HyperMachine == nil {
 		return nil, errors.New("hyper machine is required when creating a MachineScope")
 	}
+	if params.HyperCluster == nil {
+		return nil, errors.New("hyper cluster is required when creating a MachineScope")
+	}
 
 	if params.Logger == nil {
 		params.Logger = klogr.New()
@@ -57,6 +61,7 @@ func NewMachineScope(params MachineScopeParams) (*MachineScope, error) {
 		patchHelper: helper,
 
 		Cluster:      params.Cluster,
+		HyperCluster: params.HyperCluster,
 		Machine:      params.Machine,
 		HyperMachine: params.HyperMachine,
 	}, nil
@@ -70,7 +75,7 @@ type MachineScope struct {
 
 	Cluster      *clusterv1.Cluster
 	Machine      *clusterv1.Machine
-	InfraCluster *infrav1.HyperCluster
+	HyperCluster *infrav1.HyperCluster
 	HyperMachine *infrav1.HyperMachine
 }
 

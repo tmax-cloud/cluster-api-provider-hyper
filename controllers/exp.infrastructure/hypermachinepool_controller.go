@@ -20,6 +20,7 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/go-logr/logr"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -115,6 +116,11 @@ func validSSH(hmp *expinfrav1.HyperMachinePool) {
 
 			hmp.Status.HostName = string(out)[:len(outStr)-2]
 		}
+		if out, err := ssh.SendCommands("ifconfig | grep " + strings.Split(hmp.Spec.SSH.Address, ":")[0] + " -B 1"); err == nil {
+			outStr = string(out)
+
+			hmp.Status.NetworkInterface = strings.Split(outStr, ":")[0]
+		}
 
 		ssh.Close()
 	}
@@ -151,17 +157,17 @@ func (r *HyperMachinePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				// Avoid reconciling if the event triggering the reconciliation is related to incremental status updates
 				// for hypermachinepool resources only
 				UpdateFunc: func(e event.UpdateEvent) bool {
-					if e.ObjectOld.GetObjectKind().GroupVersionKind().Kind != "hypermachinepool" {
+					if e.ObjectOld.GetObjectKind().GroupVersionKind().Kind != "HyperMachinePool" {
 						return true
 					}
 
-					oldCluster := e.ObjectOld.(*expinfrav1.HyperMachinePool).DeepCopy()
-					newCluster := e.ObjectNew.(*expinfrav1.HyperMachinePool).DeepCopy()
+					oldHmp := e.ObjectOld.(*expinfrav1.HyperMachinePool).DeepCopy()
+					newHmp := e.ObjectNew.(*expinfrav1.HyperMachinePool).DeepCopy()
 
-					oldCluster.Status = expinfrav1.HyperMachinePoolStatus{}
-					newCluster.Status = expinfrav1.HyperMachinePoolStatus{}
+					oldHmp.Status = expinfrav1.HyperMachinePoolStatus{}
+					newHmp.Status = expinfrav1.HyperMachinePoolStatus{}
 
-					return !reflect.DeepEqual(oldCluster, newCluster)
+					return !reflect.DeepEqual(oldHmp, newHmp)
 				},
 			},
 		).

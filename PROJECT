@@ -16,6 +16,9 @@ resources:
 - group: infrastructure
   kind: HyperMachineTemplate
   version: v1alpha3
+- group: exp.infrastructure
+  kind: HyperIPPool
+  version: v1alpha3
 version: 3-alpha
 plugins:
   go.sdk.operatorframework.io/v2-alpha: {}

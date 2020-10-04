@@ -34,7 +34,7 @@ func SSHConnect(addr, user, password string) (*Client, error) {
 			ssh.Password(password),
 		},
 		HostKeyCallback: ssh.HostKeyCallback(func(hostname string, remote net.Addr, key ssh.PublicKey) error { return nil }),
-		Timeout:         time.Duration(1000 * time.Second),
+		Timeout:         time.Duration(2000 * time.Second),
 	}
 
 	conn, err := ssh.Dial("tcp", addr, sshConfig)

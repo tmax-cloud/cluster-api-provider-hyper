@@ -24,6 +24,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/cluster-api/util"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,6 +39,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
@@ -96,6 +98,12 @@ func (r *HyperClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		}
 	}()
 
+	// Add finalizer first if not exist to avoid the race condition between init and delete
+	if !controllerutil.ContainsFinalizer(hc, infrav1.HyperClusterFinalizer) {
+		controllerutil.AddFinalizer(hc, infrav1.HyperClusterFinalizer)
+		return ctrl.Result{}, nil
+	}
+
 	// Handle deleted clusters
 	if !hc.DeletionTimestamp.IsZero() {
 		return reconcileClusterDelete(clusterScope)
@@ -106,7 +114,23 @@ func (r *HyperClusterReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 }
 
 func reconcileClusterDelete(clusterScope *scope.ClusterScope) (reconcile.Result, error) {
+	deleteHip(clusterScope)
+	controllerutil.RemoveFinalizer(clusterScope.HyperCluster, infrav1.HyperClusterFinalizer)
 	return reconcile.Result{}, nil
+}
+
+func deleteHip(clusterScope *scope.ClusterScope) {
+	if val, ok := clusterScope.HyperCluster.Labels[infraUtil.LabelHyperIPPoolName]; ok {
+		hip := &infraexp.HyperIPPool{}
+		clusterScope.GetClient().Get(context.TODO(), types.NamespacedName{Namespace: clusterScope.Cluster.Namespace, Name: val}, hip)
+
+		oldhip := hip.DeepCopy()
+		newhip := hip.DeepCopy()
+
+		newhip.Labels[infraUtil.LabelHyperIPPool] = ""
+
+		clusterScope.GetClient().Patch(context.TODO(), newhip, client.MergeFrom(oldhip))
+	}
 }
 
 func reconcileClusterNormal(clusterScope *scope.ClusterScope) (reconcile.Result, error) {
@@ -116,9 +140,9 @@ func reconcileClusterNormal(clusterScope *scope.ClusterScope) (reconcile.Result,
 		return reconcile.Result{}, nil
 	}
 
-	apiEndpoint := getAPIEndpointfromHmp(clusterScope)
+	apiEndpoint := getAPIEndpoint(clusterScope)
 	if apiEndpoint == "" {
-		log.Info("there is no proper resource in HyperMachinePool")
+		log.Info("there is no proper virtual ip")
 		return reconcile.Result{}, nil
 	}
 
@@ -132,6 +156,47 @@ func reconcileClusterNormal(clusterScope *scope.ClusterScope) (reconcile.Result,
 	return reconcile.Result{}, nil
 }
 
+func getAPIEndpoint(clusterScope *scope.ClusterScope) string {
+	if apiEndpoint := getAPIEndpointfromHip(clusterScope); apiEndpoint != "" {
+		return apiEndpoint
+	}
+
+	if apiEndpoint := getAPIEndpointfromHmp(clusterScope); apiEndpoint != "" {
+		return apiEndpoint
+	}
+
+	return ""
+}
+
+// get virtual ip from metallb address pool named "caph-ip-pool"
+func getAPIEndpointfromHip(clusterScope *scope.ClusterScope) string {
+	hipList := &infraexp.HyperIPPoolList{}
+
+	listOptions := []client.ListOption{
+		client.MatchingLabels(map[string]string{infraUtil.LabelHyperIPPool: ""}),
+	}
+	clusterScope.GetClient().List(context.TODO(), hipList, listOptions...)
+
+	if len(hipList.Items) == 0 {
+		return ""
+	}
+
+	oldhip := &hipList.Items[0]
+	newhip := oldhip.DeepCopy()
+
+	newhip.Labels[infraUtil.LabelHyperIPPool] = "0"
+
+	clusterScope.GetClient().Patch(context.TODO(), newhip, client.MergeFrom(oldhip))
+
+	if clusterScope.HyperCluster.Labels == nil {
+		clusterScope.HyperCluster.Labels = map[string]string{}
+	}
+
+	clusterScope.HyperCluster.Labels[infraUtil.LabelHyperIPPoolName] = newhip.Name
+
+	return newhip.Spec.Ip
+}
+
 // need to enhancement for getting apiEndpoint (ex. LB)
 func getAPIEndpointfromHmp(clusterScope *scope.ClusterScope) string {
 	hmpList := &infraexp.HyperMachinePoolList{}
@@ -141,7 +206,7 @@ func getAPIEndpointfromHmp(clusterScope *scope.ClusterScope) string {
 	}
 	clusterScope.GetClient().List(context.TODO(), hmpList, listOptions...)
 
-	if &hmpList.Items[0] == nil {
+	if len(hmpList.Items) == 0 {
 		return ""
 	}
 
@@ -163,7 +228,7 @@ func (r *HyperClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				// Avoid reconciling if the event triggering the reconciliation is related to incremental status updates
 				// for hypermachinepool resources only
 				UpdateFunc: func(e event.UpdateEvent) bool {
-					if e.ObjectOld.GetObjectKind().GroupVersionKind().Kind != "hypermachinepool" {
+					if e.ObjectOld.GetObjectKind().GroupVersionKind().Kind != "HyperCluster" {
 						return true
 					}
 

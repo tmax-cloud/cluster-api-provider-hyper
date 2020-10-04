@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -27,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/cluster-api/util"
+	"sigs.k8s.io/cluster-api/util/patch"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/source"
@@ -73,6 +75,11 @@ func (r *HyperMachineReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		return ctrl.Result{}, err
 	}
 
+	if !hm.ObjectMeta.DeletionTimestamp.IsZero() {
+		log.Info("finallizer handling!")
+		return reconcileMachineDelete(hm, r.Client)
+	}
+
 	// Fetch the Machine.
 	machine, err := util.GetOwnerMachine(ctx, r.Client, hm.ObjectMeta)
 	if err != nil {
@@ -89,10 +96,17 @@ func (r *HyperMachineReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 	cluster, err := util.GetClusterFromMetadata(ctx, r.Client, machine.ObjectMeta)
 	if err != nil {
 		log.Info("Machine is missing cluster label or cluster does not exist")
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, err
 	}
 
 	log = log.WithValues("cluster", cluster.Name)
+
+	// Fetch the HyperCluster
+	hc := &infrav1.HyperCluster{}
+	if err := r.Get(ctx, types.NamespacedName{Name: cluster.Spec.InfrastructureRef.Name, Namespace: cluster.Spec.InfrastructureRef.Namespace}, hc); err != nil {
+		log.Info("Machine is missing hypercluster label or hypercluster does not exist")
+		return ctrl.Result{}, err
+	}
 
 	// Create the machine scope
 	machineScope, err := scope.NewMachineScope(scope.MachineScopeParams{
@@ -100,6 +114,7 @@ func (r *HyperMachineReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		Client:       r.Client,
 		Cluster:      cluster,
 		Machine:      machine,
+		HyperCluster: hc,
 		HyperMachine: hm,
 	})
 	if err != nil {
@@ -119,15 +134,12 @@ func (r *HyperMachineReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error
 		return ctrl.Result{}, nil
 	}
 
-	if !hm.ObjectMeta.DeletionTimestamp.IsZero() {
-		return reconcileMachineDelete(machineScope)
-	}
-
 	return reconcileMachineNormal(machineScope)
 }
 
 func reconcileMachineNormal(machineScope *scope.MachineScope) (ctrl.Result, error) {
-	if machineScope.HyperMachine.Status.Ready {
+	if machineScope.HyperMachine.Status.Ready || *machineScope.HyperMachine.Spec.ProviderID != "" {
+		machineScope.Logger.Info("HyperMachine's status ready")
 		return ctrl.Result{}, nil
 	}
 
@@ -142,7 +154,11 @@ func reconcileMachineNormal(machineScope *scope.MachineScope) (ctrl.Result, erro
 			machineScope.Logger.Info("BootStrap Controller has not yet set bootstrap data")
 			return ctrl.Result{}, nil
 		} else {
-			if err, output := doProvision(hmp.Spec.SSH, (*machineScope.Machine.Spec.Version)[1:], hmp.Status.HostName, cloudConfig); err == nil {
+			isMaster := false
+			if _, ok := machineScope.Machine.Labels[infraUtil.LabelClusterRoleMaster]; ok {
+				isMaster = true
+			}
+			if err, output := doProvision(machineScope, hmp, cloudConfig, isMaster); err == nil {
 				//when doProvisioning succeeds
 				machineScope.SetReady()
 				machineScope.SetProviderID(hmp.Status.HostName)
@@ -217,7 +233,9 @@ func adoptOrphan(machinescope *scope.MachineScope, hmp *infraexp.HyperMachinePoo
 	return machinescope.GetClient().Patch(context.Background(), newhmp, client.MergeFrom(oldhmp))
 }
 
-func doProvision(sshInfo *infraexp.SSHinfo, version, hostname string, value []byte) (error, string) {
+func doProvision(machineScope *scope.MachineScope, hmp *infraexp.HyperMachinePool, value []byte, isMaster bool) (error, string) {
+	sshInfo := hmp.Spec.SSH
+
 	cloudConfig := infraUtil.NewCloudConfig()
 	cloudConfig.FromBytes(value)
 
@@ -226,19 +244,35 @@ func doProvision(sshInfo *infraexp.SSHinfo, version, hostname string, value []by
 		return err, "connection error"
 	}
 
+	if isMaster {
+		configMap := make(map[string]string)
+		configMap["$1"] = hmp.Status.NetworkInterface
+		configMap["$2"] = hipNum2Pri(machineScope)
+		configMap["$3"] = machineScope.HyperCluster.Spec.ControlPlaneEndpoint.Host
+		if configMap["$2"] == "100" {
+			configMap["$4"] = "MASTER"
+		} else {
+			configMap["$4"] = "BACKUP"
+		}
+
+		conn.SendCommands("rm /tmp/keepalived.sh")
+		conn.ScpFile("scripts/keepalived.sh", "/tmp/keepalived.sh", configMap)
+		conn.SendCommands("chmod +x /tmp/keepalived.sh")
+		conn.SendCommands("cd /tmp/ && ./keepalived.sh")
+		conn.SendCommands("systemctl restart keepalived")
+	}
+
 	conn.SendCommands("rm /tmp/docker.sh")
 	conn.ScpFile("scripts/docker.sh", "/tmp/docker.sh", nil)
 	conn.SendCommands("chmod +x /tmp/docker.sh")
 	conn.SendCommands("cd /tmp/ && ./docker.sh")
 
 	configMap := make(map[string]string)
-	configMap["$1"] = version
+	configMap["$1"] = (*machineScope.Machine.Spec.Version)[1:]
 	conn.SendCommands("rm /tmp/k8s.sh")
 	conn.ScpFile("scripts/k8s.sh", "/tmp/k8s.sh", configMap)
 	conn.SendCommands("chmod +x /tmp/k8s.sh")
 	conn.SendCommands("cd /tmp/ && ./k8s.sh")
-
-	conn.SendCommands("kubeadm reset --force")
 
 	conn.SendCommands("rm -r /etc/kubernetes/pki")
 	conn.SendCommands("rm /tmp/kubeadm.yaml")
@@ -251,7 +285,7 @@ func doProvision(sshInfo *infraexp.SSHinfo, version, hostname string, value []by
 		contents := ""
 		for _, content := range wf.Contents {
 			if strings.HasPrefix(content, "  name: ") {
-				contents = contents + "  name: " + hostname
+				contents = contents + "  name: " + hmp.Status.HostName
 				continue
 			}
 			if content == "" || len(content) == 0 {
@@ -266,24 +300,55 @@ func doProvision(sshInfo *infraexp.SSHinfo, version, hostname string, value []by
 		conn.SendCommands("chmod " + wf.Permissions + " " + wf.Path)
 	}
 
-	conn.SendCommands(strings.ReplaceAll(infraUtil.SetProviderID2KubeletConfig, "bmpName", hostname))
+	conn.SendCommands(strings.ReplaceAll(infraUtil.SetProviderID2KubeletConfig, "bmpName", hmp.Status.HostName))
 	for _, rc := range cloudConfig.RunCmd {
 		if output, err := conn.SendCommands(rc); err != nil {
 			return err, string(output)
 		}
 	}
 
+	conn.Close()
+
 	return nil, ""
 }
 
-func reconcileMachineDelete(machineScope *scope.MachineScope) (ctrl.Result, error) {
-	doCleanHyperMachinePool(machineScope)
-	controllerutil.RemoveFinalizer(machineScope.HyperMachine, infrav1.HyperMachineFinalizer)
+func hipNum2Pri(machineScope *scope.MachineScope) string {
+	hipNum := ""
+
+	if val, ok := machineScope.HyperCluster.Labels[infraUtil.LabelHyperIPPoolName]; ok {
+		hip := &infraexp.HyperIPPool{}
+		machineScope.GetClient().Get(context.TODO(), types.NamespacedName{Namespace: machineScope.Cluster.Namespace, Name: val}, hip)
+
+		oldhip := hip.DeepCopy()
+		newhip := hip.DeepCopy()
+
+		if num, err := strconv.Atoi(newhip.Labels[infraUtil.LabelHyperIPPool]); err == nil {
+			newhip.Labels[infraUtil.LabelHyperIPPool] = strconv.Itoa(num + 1)
+			hipNum = strconv.Itoa(100 - num)
+		}
+
+		machineScope.GetClient().Patch(context.TODO(), newhip, client.MergeFrom(oldhip))
+	}
+
+	return hipNum
+}
+
+func reconcileMachineDelete(hm *infrav1.HyperMachine, c client.Client) (ctrl.Result, error) {
+	//set helper
+	if helper, err := patch.NewHelper(hm, c); err != nil {
+		return ctrl.Result{}, err
+	} else {
+		doCleanHyperMachinePool(hm, c)
+		controllerutil.RemoveFinalizer(hm, infrav1.HyperMachineFinalizer)
+
+		helper.Patch(context.TODO(), hm)
+	}
+
 	return ctrl.Result{}, nil
 }
 
-func doCleanHyperMachinePool(machineScope *scope.MachineScope) {
-	ownRef := machineScope.HyperMachine.Spec.HyperMachinePoolRef
+func doCleanHyperMachinePool(hm *infrav1.HyperMachine, c client.Client) {
+	ownRef := hm.Spec.HyperMachinePoolRef
 
 	if &ownRef == nil || len(ownRef.Name) == 0 {
 		return
@@ -292,7 +357,18 @@ func doCleanHyperMachinePool(machineScope *scope.MachineScope) {
 	hmp := &infraexp.HyperMachinePool{}
 	key := types.NamespacedName{Namespace: ownRef.Namespace, Name: ownRef.Name}
 
-	machineScope.GetClient().Get(context.TODO(), key, hmp)
+	c.Get(context.TODO(), key, hmp)
+
+	sshInfo := hmp.Spec.SSH
+
+	conn, err := infraUtil.SSHConnect(sshInfo.Address, sshInfo.SSHid, sshInfo.SSHpw)
+	if err != nil {
+		return
+	}
+
+	conn.SendCommands("kubeadm reset --force")
+	conn.SendCommands("apt-get purge -y keepalived")
+	conn.Close()
 
 	oldhmp := hmp.DeepCopy()
 	newhmp := hmp.DeepCopy()
@@ -302,7 +378,7 @@ func doCleanHyperMachinePool(machineScope *scope.MachineScope) {
 		delete(newhmp.Labels, infraUtil.LabelClusterRoleMaster)
 	}
 
-	machineScope.GetClient().Patch(context.TODO(), newhmp, client.MergeFrom(oldhmp))
+	c.Patch(context.TODO(), newhmp, client.MergeFrom(oldhmp))
 }
 
 func (r *HyperMachineReconciler) requeueHyperMachinesForBootStrapData(o handler.MapObject) []ctrl.Request {
@@ -326,6 +402,13 @@ func (r *HyperMachineReconciler) requeueHyperMachinesForBootStrapData(o handler.
 		return nil
 	}
 
+	hm := &infrav1.HyperMachine{}
+	r.Get(context.TODO(), types.NamespacedName{Namespace: m.Namespace, Name: m.Spec.InfrastructureRef.Name}, hm)
+	if hm.Status.Ready {
+		log.V(4).Info("HyperMachine has ready=true, skipping mapping.")
+		return nil
+	}
+
 	log.V(4).Info("Adding request.", "HyperMachine", m.Spec.InfrastructureRef.Name)
 	return []ctrl.Request{
 		{
@@ -342,17 +425,13 @@ func (r *HyperMachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				// Avoid reconciling if the event triggering the reconciliation is related to incremental status updates
 				// for hypermachinepool resources only
 				UpdateFunc: func(e event.UpdateEvent) bool {
-					if e.ObjectOld.GetObjectKind().GroupVersionKind().Kind != "hypermachinepool" {
-						return true
-					}
+					oldHyperMachine := e.ObjectOld.(*infrav1.HyperMachine).DeepCopy()
+					newHyperMachine := e.ObjectNew.(*infrav1.HyperMachine).DeepCopy()
 
-					oldCluster := e.ObjectOld.(*infrav1.HyperMachine).DeepCopy()
-					newCluster := e.ObjectNew.(*infrav1.HyperMachine).DeepCopy()
+					oldHyperMachine.Status = infrav1.HyperMachineStatus{}
+					newHyperMachine.Status = infrav1.HyperMachineStatus{}
 
-					oldCluster.Status = infrav1.HyperMachineStatus{}
-					newCluster.Status = infrav1.HyperMachineStatus{}
-
-					return !reflect.DeepEqual(oldCluster, newCluster)
+					return !reflect.DeepEqual(oldHyperMachine, newHyperMachine)
 				},
 			},
 		).
