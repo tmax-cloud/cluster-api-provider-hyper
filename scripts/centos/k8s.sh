@@ -10,6 +10,7 @@ sudo sed -i 's/^SELINUX=enforcing$/SELINUX=permissive/' /etc/selinux/config
 modprobe overlay
 modprobe br_netfilter
 echo '1' > /proc/sys/net/bridge/bridge-nf-call-iptables
+echo '1' > /proc/sys/net/ipv4/ip_forward
 
 swapoff -a
 
