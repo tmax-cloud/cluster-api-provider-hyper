@@ -110,18 +110,28 @@ func validSSH(hmp *expinfrav1.HyperMachinePool) {
 			outStr = string(out)
 
 			hmp.Status.OS = string(out)[len(string("ID=")) : len(outStr)-2]
+			if strings.Contains(hmp.Status.OS, "\"") {
+				hmp.Status.OS = strings.Split(hmp.Status.OS, "\"")[1]
+			}
 		}
 		if out, err := ssh.SendCommands("hostname"); err == nil {
 			outStr = string(out)
 
 			hmp.Status.HostName = string(out)[:len(outStr)-2]
 		}
-		if out, err := ssh.SendCommands("ifconfig | grep " + strings.Split(hmp.Spec.SSH.Address, ":")[0] + " -B 1"); err == nil {
-			outStr = string(out)
+		switch hmp.Status.OS {
+		case "ubuntu":
+			if out, err := ssh.SendCommands("ifconfig | grep " + strings.Split(hmp.Spec.SSH.Address, ":")[0] + " -B 1"); err == nil {
+				outStr = string(out)
 
-			hmp.Status.NetworkInterface = strings.Split(outStr, ":")[0]
+				hmp.Status.NetworkInterface = strings.Split(outStr, ":")[0]
+			}
+		case "centos":
+			if out, err := ssh.SendCommands("ip addr | grep " + strings.Split(hmp.Spec.SSH.Address, ":")[0] + " -B 3"); err == nil {
+				outStr = string(out)
+				hmp.Status.NetworkInterface = strings.Split(outStr, ":")[1][1:]
+			}
 		}
-
 		ssh.Close()
 	}
 }

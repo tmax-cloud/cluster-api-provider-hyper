@@ -19,7 +19,6 @@ package controllers
 import (
 	"context"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/go-logr/logr"
@@ -158,7 +157,7 @@ func reconcileMachineNormal(machineScope *scope.MachineScope) (ctrl.Result, erro
 			if _, ok := machineScope.Machine.Labels[infraUtil.LabelClusterRoleMaster]; ok {
 				isMaster = true
 			}
-			if err, output := doProvision(machineScope, hmp, cloudConfig, isMaster); err == nil {
+			if err, output := doProvisioning(machineScope, hmp, cloudConfig, isMaster); err == nil {
 				//when doProvisioning succeeds
 				machineScope.SetReady()
 				machineScope.SetProviderID(hmp.Status.HostName)
@@ -233,104 +232,15 @@ func adoptOrphan(machinescope *scope.MachineScope, hmp *infraexp.HyperMachinePoo
 	return machinescope.GetClient().Patch(context.Background(), newhmp, client.MergeFrom(oldhmp))
 }
 
-func doProvision(machineScope *scope.MachineScope, hmp *infraexp.HyperMachinePool, value []byte, isMaster bool) (error, string) {
-	sshInfo := hmp.Spec.SSH
-
-	cloudConfig := infraUtil.NewCloudConfig()
-	cloudConfig.FromBytes(value)
-
-	conn, err := infraUtil.SSHConnect(sshInfo.Address, sshInfo.SSHid, sshInfo.SSHpw)
-	if err != nil {
-		return err, "connection error"
+func doProvisioning(machineScope *scope.MachineScope, hmp *infraexp.HyperMachinePool, value []byte, isMaster bool) (error, string) {
+	switch hmp.Status.OS {
+	case "ubuntu":
+		return infraUtil.UbuntuProvisioning(machineScope, hmp, value, isMaster)
+	case "centos":
+		return infraUtil.CentosProvisioning(machineScope, hmp, value, isMaster)
 	}
-
-	if isMaster {
-		configMap := make(map[string]string)
-		configMap["$1"] = hmp.Status.NetworkInterface
-		configMap["$2"] = hipNum2Pri(machineScope)
-		configMap["$3"] = machineScope.HyperCluster.Spec.ControlPlaneEndpoint.Host
-		if configMap["$2"] == "100" {
-			configMap["$4"] = "MASTER"
-		} else {
-			configMap["$4"] = "BACKUP"
-		}
-
-		conn.SendCommands("rm /tmp/keepalived.sh")
-		conn.ScpFile("scripts/keepalived.sh", "/tmp/keepalived.sh", configMap)
-		conn.SendCommands("chmod +x /tmp/keepalived.sh")
-		conn.SendCommands("cd /tmp/ && ./keepalived.sh")
-		conn.SendCommands("systemctl restart keepalived")
-	}
-
-	conn.SendCommands("rm /tmp/docker.sh")
-	conn.ScpFile("scripts/docker.sh", "/tmp/docker.sh", nil)
-	conn.SendCommands("chmod +x /tmp/docker.sh")
-	conn.SendCommands("cd /tmp/ && ./docker.sh")
-
-	configMap := make(map[string]string)
-	configMap["$1"] = (*machineScope.Machine.Spec.Version)[1:]
-	conn.SendCommands("rm /tmp/k8s.sh")
-	conn.ScpFile("scripts/k8s.sh", "/tmp/k8s.sh", configMap)
-	conn.SendCommands("chmod +x /tmp/k8s.sh")
-	conn.SendCommands("cd /tmp/ && ./k8s.sh")
-
-	conn.SendCommands("rm -r /etc/kubernetes/pki")
-	conn.SendCommands("rm /tmp/kubeadm.yaml")
-	conn.SendCommands("rm /tmp/kubeadm-join-config.yaml")
-	conn.SendCommands("mkdir -p /etc/kubernetes/pki")
-	conn.SendCommands("mkdir -p /etc/kubernetes/pki/etcd")
-	conn.SendCommands("swapoff -a")
-
-	for _, wf := range cloudConfig.WriteFiles {
-		contents := ""
-		for _, content := range wf.Contents {
-			if strings.HasPrefix(content, "  name: ") {
-				contents = contents + "  name: " + hmp.Status.HostName
-				continue
-			}
-			if content == "" || len(content) == 0 {
-				continue
-			}
-			contents = contents + content + "\\n"
-		}
-
-		if output, err := conn.SendCommands("echo -e \"" + contents + "\" >> " + wf.Path); err != nil {
-			return err, string(output)
-		}
-		conn.SendCommands("chmod " + wf.Permissions + " " + wf.Path)
-	}
-
-	conn.SendCommands(strings.ReplaceAll(infraUtil.SetProviderID2KubeletConfig, "bmpName", hmp.Status.HostName))
-	for _, rc := range cloudConfig.RunCmd {
-		if output, err := conn.SendCommands(rc); err != nil {
-			return err, string(output)
-		}
-	}
-
-	conn.Close()
 
 	return nil, ""
-}
-
-func hipNum2Pri(machineScope *scope.MachineScope) string {
-	hipNum := ""
-
-	if val, ok := machineScope.HyperCluster.Labels[infraUtil.LabelHyperIPPoolName]; ok {
-		hip := &infraexp.HyperIPPool{}
-		machineScope.GetClient().Get(context.TODO(), types.NamespacedName{Namespace: machineScope.Cluster.Namespace, Name: val}, hip)
-
-		oldhip := hip.DeepCopy()
-		newhip := hip.DeepCopy()
-
-		if num, err := strconv.Atoi(newhip.Labels[infraUtil.LabelHyperIPPool]); err == nil {
-			newhip.Labels[infraUtil.LabelHyperIPPool] = strconv.Itoa(num + 1)
-			hipNum = strconv.Itoa(100 - num)
-		}
-
-		machineScope.GetClient().Patch(context.TODO(), newhip, client.MergeFrom(oldhip))
-	}
-
-	return hipNum
 }
 
 func reconcileMachineDelete(hm *infrav1.HyperMachine, c client.Client) (ctrl.Result, error) {
@@ -367,7 +277,14 @@ func doCleanHyperMachinePool(hm *infrav1.HyperMachine, c client.Client) {
 	}
 
 	conn.SendCommands("kubeadm reset --force")
-	conn.SendCommands("apt-get purge -y keepalived")
+
+	switch hmp.Status.OS {
+	case "ubuntu":
+		conn.SendCommands("apt-get purge -y keepalived")
+	case "centos":
+		conn.SendCommands("yum remove -y keepalived")
+	}
+
 	conn.Close()
 
 	oldhmp := hmp.DeepCopy()

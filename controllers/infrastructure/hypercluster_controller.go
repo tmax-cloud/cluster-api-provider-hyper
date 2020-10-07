@@ -135,7 +135,7 @@ func deleteHip(clusterScope *scope.ClusterScope) {
 
 func reconcileClusterNormal(clusterScope *scope.ClusterScope) (reconcile.Result, error) {
 	log := clusterScope.Logger
-	if clusterScope.HyperCluster.Status.Ready {
+	if len(clusterScope.HyperCluster.Spec.ControlPlaneEndpoint.Host) > 0 || clusterScope.HyperCluster.Status.Ready {
 		log.Info("apiEndpoint already exists. skip reconcile")
 		return reconcile.Result{}, nil
 	}
